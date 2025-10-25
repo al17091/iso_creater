@@ -1,0 +1,22 @@
+﻿<Project Sdk="Microsoft.NET.Sdk.WindowsDesktop">
+
+  <PropertyGroup>
+    <!-- Windows デスクトップ用 SDK を利用 -->
+    <OutputType>WinExe</OutputType>
+    <!-- Windows 固有 API を利用するために "-windows" を付与 -->
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <!-- WPF を使用しているプロジェクトであることを明示 -->
+    <UseWPF>true</UseWPF>
+    <!-- Windows Forms (FolderBrowserDialog など) を有効化 -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="DiscUtils.Core" Version="0.16.13" />
+    <PackageReference Include="DiscUtils.Udf" Version="0.16.13" />
+  </ItemGroup>
+
+  <!-- 既存の参照やファイルがあればここに残してください -->
+  <!-- 例: <ItemGroup>... </ItemGroup> -->
+</Project>
