@@ -1,13 +1,10 @@
 ﻿using System;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
-using System.Windows.Forms;
-using Microsoft.Win32;
-using DiscUtils;
-using DiscUtils.Iso9660;
-using System.Collections.Generic; // 追加
+using Microsoft.WindowsAPICodePack.Dialogs;
 
 namespace iso_creater
 {
@@ -18,36 +15,36 @@ namespace iso_creater
     {
         private CancellationTokenSource? _cts;
         private bool _isRunning = false;
+        private readonly IsoCreationService _isoCreationService;
 
         public MainWindow()
         {
             InitializeComponent();
+            _isoCreationService = new IsoCreationService();
         }
 
         private void BrowseSourceFolder_Click(object sender, RoutedEventArgs e)
         {
-            using var dlg = new FolderBrowserDialog
+            var dlg = new CommonOpenFileDialog
             {
-                Description = "ソースフォルダを選択してください",
-                UseDescriptionForTitle = true
+                IsFolderPicker = true,
+                Title = "ソースフォルダを選択してください"
             };
 
-            var result = dlg.ShowDialog();
-            if (result == System.Windows.Forms.DialogResult.OK && !string.IsNullOrEmpty(dlg.SelectedPath))
+            if (dlg.ShowDialog() == CommonFileDialogResult.Ok && !string.IsNullOrEmpty(dlg.FileName))
             {
-                SourceFolderPathTextBox.Text = dlg.SelectedPath;
+                SourceFolderPathTextBox.Text = dlg.FileName;
 
-                // ボリュームラベルが空の場合は選択したフォルダ名を設定
                 if (string.IsNullOrWhiteSpace(VolumeLabelTextBox.Text))
                 {
                     try
                     {
-                        var folderName = Path.GetFileName(dlg.SelectedPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
-                        VolumeLabelTextBox.Text = string.IsNullOrEmpty(folderName) ? dlg.SelectedPath : folderName;
+                        var folderName = Path.GetFileName(dlg.FileName.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+                        VolumeLabelTextBox.Text = string.IsNullOrEmpty(folderName) ? dlg.FileName : folderName;
                     }
                     catch
                     {
-                        VolumeLabelTextBox.Text = dlg.SelectedPath;
+                        VolumeLabelTextBox.Text = dlg.FileName;
                     }
                 }
             }
@@ -72,149 +69,91 @@ namespace iso_creater
 
         private async void CreateIsoButton_Click(object sender, RoutedEventArgs e)
         {
-            if (!_isRunning)
+            if (_isRunning)
             {
-                // 実行開始
-                if (string.IsNullOrWhiteSpace(SourceFolderPathTextBox.Text))
-                {
-                    System.Windows.MessageBox.Show("ソースフォルダを選択してください。", "エラー", MessageBoxButton.OK, MessageBoxImage.Warning);
-                    return;
-                }
-
-                if (string.IsNullOrWhiteSpace(SaveFilePathTextBox.Text))
-                {
-                    System.Windows.MessageBox.Show("保存先を指定してください。", "エラー", MessageBoxButton.OK, MessageBoxImage.Warning);
-                    return;
-                }
-
-                _cts = new CancellationTokenSource();
-                _isRunning = true;
-                CreateIsoButton.Content = "キャンセル";
-                SetControlsEnabled(false);
-
-                try
-                {
-                    // 実際の ISO 作成処理はここに実装します。
-                    // 例: DiscUtils などのライブラリを使ってディレクトリを ISO 化。
-                    // また除外フィルタは .gitignore 様式をパースして適用する必要があります（未実装）。
-
-                    // CreateIsoAsync: 指定フォルダから UDF 形式の ISO を作成します。
-                    // 注意: この実装は一般的な DiscUtils の使い方を想定しています。
-                    // 実際の API 名やシグネチャは使用中の DiscUtils バージョンによって異なる場合があります。
-                    // 必要に応じて Build / AddFile の呼び出しをプロジェクトの DiscUtils バージョンに合わせて調整してください。
-                    await CreateIsoAsync(SourceFolderPathTextBox.Text, SaveFilePathTextBox.Text, VolumeLabelTextBox.Text, null, _cts.Token);
-
-                    System.Windows.MessageBox.Show("ISO 作成が完了しました。", "完了", MessageBoxButton.OK, MessageBoxImage.Information);
-                }
-                catch (OperationCanceledException)
-                {
-                    System.Windows.MessageBox.Show("処理はキャンセルされました。", "キャンセル", MessageBoxButton.OK, MessageBoxImage.Information);
-                }
-                catch (Exception ex)
-                {
-                    System.Windows.MessageBox.Show($"エラー: {ex.Message}", "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
-                }
-                finally
-                {
-                    _isRunning = false;
-                    _cts?.Dispose();
-                    _cts = null;
-                    CreateIsoButton.Content = "ISO作成";
-                    SetControlsEnabled(true);
-                    CreationProgressBar.Value = 0;
-                }
-            }
-            else
-            {
-                // キャンセル要求
                 _cts?.Cancel();
+                return;
+            }
+
+            if (!ValidateInput()) return;
+
+            _cts = new CancellationTokenSource();
+            _isRunning = true;
+            UpdateUiForRunningState(true);
+
+            try
+            {
+                var sourceDirectory = SourceFolderPathTextBox.Text;
+                var outputFile = SaveFilePathTextBox.Text;
+                var volumeLabel = VolumeLabelTextBox.Text;
+                var fileSystem = (IsoFileSystem)FileSystemComboBox.SelectedIndex;
+                var excludePatterns = ParseIgnorePatterns(ExcludePatternsTextBox.Text);
+
+                var progress = new Progress<double>(p => CreationProgressBar.Value = p);
+
+                await _isoCreationService.CreateIsoAsync(
+                    sourceDirectory,
+                    outputFile,
+                    volumeLabel,
+                    fileSystem,
+                    excludePatterns,
+                    progress,
+                    _cts.Token);
+
+                MessageBox.Show("ISO 作成が完了しました。", "完了", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (OperationCanceledException)
+            {
+                MessageBox.Show("処理はキャンセルされました。", "キャンセル", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"エラー: {ex.Message}", "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            finally
+            {
+                _isRunning = false;
+                _cts?.Dispose();
+                _cts = null;
+                UpdateUiForRunningState(false);
+                CreationProgressBar.Value = 0;
             }
         }
 
-        private void SetControlsEnabled(bool enabled)
+        private bool ValidateInput()
         {
-            BrowseSourceFolderButton.IsEnabled = enabled;
-            BrowseSaveFileButton.IsEnabled = enabled;
-            VolumeLabelTextBox.IsEnabled = enabled;
-            FileSystemComboBox.IsEnabled = enabled;
-            ExcludePatternsTextBox.IsEnabled = enabled;
-        }
-
-        // 指定フォルダから UDF 形式の ISO を作成します。
-        // 注意: この実装は一般的な DiscUtils の使い方を想定しています。
-        // 実際の API 名やシグネチャは使用中の DiscUtils バージョンによって異なる場合があります。
-        // 必要に応じて Build / AddFile の呼び出しをプロジェクトの DiscUtils バージョンに合わせて調整してください。
-        private async Task CreateIsoAsync(string sourceDirectory, string outputIsoFile, string volumeLabel, IProgress<double> progress, CancellationToken token)
-        {
-            if (string.IsNullOrWhiteSpace(sourceDirectory)) throw new ArgumentException("sourceDirectory is required.", nameof(sourceDirectory));
-            if (string.IsNullOrWhiteSpace(outputIsoFile)) throw new ArgumentException("outputIsoFile is required.", nameof(outputIsoFile));
-            if (!Directory.Exists(sourceDirectory)) throw new DirectoryNotFoundException(sourceDirectory);
-
-            var allFiles = Directory.EnumerateFiles(sourceDirectory, "*", SearchOption.AllDirectories);
-            var fileList = new System.Collections.Generic.List<string>(allFiles);
-            int total = fileList.Count;
-            int processed = 0;
-
-            await Task.Run(() =>
+            if (string.IsNullOrWhiteSpace(SourceFolderPathTextBox.Text))
             {
-                token.ThrowIfCancellationRequested();
+                MessageBox.Show("ソースフォルダを選択してください。", "エラー", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return false;
+            }
 
-                var outDir = Path.GetDirectoryName(outputIsoFile);
-                if (!string.IsNullOrEmpty(outDir) && !Directory.Exists(outDir))
-                {
-                    Directory.CreateDirectory(outDir);
-                }
-
-                var fileStreams = new List<Stream>(); // ストリームを保持するリスト
-                try
-                {
-                    using (var outStream = File.Create(outputIsoFile))
-                    {
-                        var isoBuilder = new CDBuilder
-                        {
-                            VolumeIdentifier = volumeLabel
-                        };
-
-                        foreach (var fullPath in fileList)
-                        {
-                            token.ThrowIfCancellationRequested();
-                            var relativePath = Path.GetRelativePath(sourceDirectory, fullPath).Replace(Path.DirectorySeparatorChar, '/');
-                            
-                            var fs = File.OpenRead(fullPath);
-                            fileStreams.Add(fs); // リストに追加して後で破棄する
-                            isoBuilder.AddFile(relativePath, fs);
-                            
-                            processed++;
-                            progress?.Report(total == 0 ? 1.0 : (double)processed / total);
-                        }
-
-                        token.ThrowIfCancellationRequested();
-                        isoBuilder.Build(outStream);
-                    }
-                }
-                finally
-                {
-                    // すべてのファイルストリームを確実に破棄する
-                    foreach (var stream in fileStreams)
-                    {
-                        stream.Dispose();
-                    }
-                }
-
-            }, token);
+            if (string.IsNullOrWhiteSpace(SaveFilePathTextBox.Text))
+            {
+                MessageBox.Show("保存先を指定してください。", "エラー", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return false;
+            }
+            return true;
         }
 
-        // TODO: .gitignore 構文パーサーを実装またはライブラリを導入してください。
-        // 現在は単純に改行で分割した文字列配列を返します（実運用ではワイルドカードや除外ルール適用が必要）。
+        private void UpdateUiForRunningState(bool isRunning)
+        {
+            CreateIsoButton.Content = isRunning ? "キャンセル" : "ISO作成";
+            BrowseSourceFolderButton.IsEnabled = !isRunning;
+            BrowseSaveFileButton.IsEnabled = !isRunning;
+            VolumeLabelTextBox.IsEnabled = !isRunning;
+            FileSystemComboBox.IsEnabled = !isRunning;
+            ExcludePatternsTextBox.IsEnabled = !isRunning;
+        }
+
         private string[] ParseIgnorePatterns(string text)
         {
             if (string.IsNullOrWhiteSpace(text)) return Array.Empty<string>();
-            var lines = text.Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries);
-            for (int i = 0; i < lines.Length; i++)
-            {
-                lines[i] = lines[i].Trim();
-            }
-            return lines;
+
+            return text.Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries)
+                       .Select(line => line.Trim())
+                       .Where(line => !string.IsNullOrEmpty(line) && !line.StartsWith("#"))
+                       .ToArray();
         }
     }
 }
