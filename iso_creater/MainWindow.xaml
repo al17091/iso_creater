@@ -60,7 +60,7 @@
                          ToolTip="例: *.log, bin/, /temp のように記述します"/>
 
                 <TextBlock Grid.Row="1" Foreground="Gray" FontSize="11" Margin="0,6,0,0">
-                    コメント行は # で始めます。実際のパースはコードで実装します。
+                    コメント行は # で始めます。
                 </TextBlock>
             </Grid>
         </GroupBox>
